@@ -1,0 +1,122 @@
+#!/usr/bin/env python
+#
+# pdf2pptx, a tool to convert PDF to PowerPoint presentations
+# Copyright (C) 2019 Vahan Nanumyan <vahan@nanumyan.com>
+# Snippets from: "Impressive, a fancy presentation tool" by Martin J. Fiedler
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License, version 3, as
+# published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write to the Free Software
+# Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+
+
+from __future__ import division
+
+__title__   = "pdf2pptx"
+__version__ = "0.1"
+__author__  = "Vahan Nanumyan"
+__email__   = "vahan@nanumyan.com"
+
+import os
+import sys
+import subprocess
+import re
+
+from PIL import Image
+
+from pptx import Presentation
+from pptx.chart.data import ChartData
+from pptx.enum.chart import XL_CHART_TYPE
+from pptx.util import Inches
+
+import tempfile
+import shutil
+
+## variables
+aspect_ratio = 16/9 # set from PDF
+resolution = 450
+# TODO: check that it is PDF
+input_file = sys.argv[1]
+output_file = '{}.pptx'.format( input_file.strip('.pdf') )
+## convert each page of the PDF into an image
+
+dirpath = tempfile.mkdtemp()
+
+
+pdf_info = { x.split(': ')[0] : x.split(': ')[1].strip() for x in subprocess.check_output(["pdfinfo", input_file]).split('\n')[:-1] }
+pages = int(pdf_info['Pages'])
+shape = pdf_info['Page size'].split()
+aspect_ratio = float(shape[0]) / float(shape[2])
+
+
+# initialize PPTX presentation
+prs = Presentation()
+prs.slide_width = int(prs.slide_height * aspect_ratio)
+width = prs.slide_width
+height = prs.slide_height
+
+title_slide_layout = prs.slide_layouts[5]
+
+print("Processing.  This may take some time...")
+
+# split PDF into pages
+#os.system("pdfseparate {1} '{0}/{1}_%d.pdf'".format(dirpath, input_file))
+# os.system('gs -dNOPAUSE -r{0} -sDEVICE=tiff24nc -sOutputFile={2}_%d.tiff -dTextAlphaBits=4 -dGraphicsAlphaBits=4 -dBATCH {1}/{2}'.format(resolution, dirpath, input_file))
+subprocess.call(["pdftoppm",
+                "-f", '1', "-l", str(pages),
+                "-r", str(resolution),
+                input_file,
+                '{0}/{1}'.format(dirpath, input_file) ])
+
+digits = len(str(pages))
+
+
+# setup progressbar
+progbar_width = pages
+str(1).zfill(2)
+
+print("Converting pages...")
+sys.stdout.write("[%s] %s/%d" % (" " * progbar_width, '0'.rjust(digits), pages))
+sys.stdout.flush()
+sys.stdout.write("\b" * (progbar_width + 3 + 2*digits)) # return to start of line, after '['
+
+
+for page in range(1, pages+1):
+
+    #os.system("convert -density {0} '{1}/{2}_{3}.pdf' '{1}/{2}_{3}.png'".format(resolution, dirpath, input_file, page))
+    #print("converted page {}".format(page))
+    #os.system("rm {0}/{1}_{2}.pdf".format(dirpath, input_file, page))
+
+    # convert PPM to PNG
+    try:
+        img = Image.open("{dir}/{inp}-{p:0{dig}d}.ppm".format(dir=dirpath, inp=input_file, p=page, dig=digits))
+    except IOError:
+        img = Image.open("{dir}/{inp}-{p:0{dig}d}.ppm".format(dir=dirpath, inp=input_file, p=page, dig=6))
+    img.save("{dir}/{inp}-{p:0{dig}d}.png".format(dir=dirpath, inp=input_file, p=page, dig=digits))
+
+    ## add the page into a slide
+    slide = prs.slides.add_slide(title_slide_layout)
+    slide.shapes.add_picture("{dir}/{inp}-{p:0{dig}d}.png".format(dir=dirpath, inp=input_file, p=page, dig=digits), 0, 0, width, height)
+
+    # update the bar
+    sys.stdout.write("=")
+    sys.stdout.write("%s] %s/%d" % (" " * (progbar_width - page), str(page).rjust(digits), pages))
+    sys.stdout.flush()
+    sys.stdout.write("\b" * (progbar_width - page +  3 + 2*digits))
+sys.stdout.write("\n")
+
+## save the presentation
+prs.save(output_file)
+
+## destroy the temp dir
+shutil.rmtree(dirpath)
+
+print("Done!")
